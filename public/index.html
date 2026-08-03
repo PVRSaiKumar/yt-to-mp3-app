@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT to MP3 - Video Downloader</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>YT to MP3</h1>
+            <p class="subtitle">Download YouTube videos as MP3 files</p>
+        </header>
+
+        <main>
+            <div class="input-section">
+                <input 
+                    type="text" 
+                    id="playlistUrl" 
+                    placeholder="Paste YouTube video URL here..."
+                    autocomplete="off"
+                >
+                <button id="downloadBtn" onclick="startDownload()">
+                    <span class="btn-text">Download</span>
+                    <span class="btn-loader hidden"></span>
+                </button>
+            </div>
+
+            <div class="examples">
+                <p>Supported URLs:</p>
+                <code>https://www.youtube.com/watch?v=dQw4w9WgXcQ</code>
+                <code>https://youtu.be/dQw4w9WgXcQ</code>
+                <code>https://youtube.com/shorts/...</code>
+            </div>
+
+            <div id="status" class="status hidden">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p id="statusText"></p>
+            </div>
+
+            <div id="filesSection" class="files-section hidden">
+                <h2>Downloaded Files</h2>
+                <div id="filesList" class="files-list"></div>
+            </div>
+
+            <div id="error" class="error hidden"></div>
+        </main>
+
+        <footer>
+            <p>For educational purposes only. Respect copyright laws.</p>
+        </footer>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
