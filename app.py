@@ -2,14 +2,46 @@ import os
 import uuid
 import tempfile
 import shutil
+import requests
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
-import yt_dlp
 
 app = Flask(__name__, static_folder='public', static_url_path='')
 CORS(app)
 
 progress_data = {}
+
+INVIDIOUS_INSTANCES = [
+    "https://vid.puffyan.us",
+    "https://invidious.snopyta.org",
+    "https://yewtu.be",
+    "https://inv.riverside.rocks",
+    "https://invidious.nerdvpn.de",
+    "https://iv.ggtyler.dev",
+]
+
+def get_working_instance():
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            r = requests.get(f"{instance}/api/v1/stats", timeout=5)
+            if r.status_code == 200:
+                return instance
+        except:
+            continue
+    return INVIDIOUS_INSTANCES[0]
+
+def extract_video_id(url):
+    import re
+    patterns = [
+        r'(?:v=|/v/|youtu\.be/)([a-zA-Z0-9_-]{11})',
+        r'(?:embed/)([a-zA-Z0-9_-]{11})',
+        r'^([a-zA-Z0-9_-]{11})$',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
 @app.route('/api/health')
 def health():
@@ -31,42 +63,57 @@ def start_download():
     if not url:
         return jsonify({'error': 'URL is required'}), 400
 
+    video_id = extract_video_id(url)
+    if not video_id:
+        return jsonify({'error': 'Could not extract video ID from URL'}), 400
+
     task_id = str(uuid.uuid4())[:8]
     tmp_dir = tempfile.mkdtemp()
 
     try:
-        output_path = os.path.join(tmp_dir, '%(title)s.%(ext)s')
+        instance = get_working_instance()
 
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': output_path,
-            'quiet': False,
-            'no_warnings': False,
-            'noplaylist': True,
-        }
+        info_url = f"{instance}/api/v1/videos/{video_id}"
+        info_resp = requests.get(info_url, timeout=10)
+        if info_resp.status_code != 200:
+            return jsonify({'error': 'Failed to fetch video info'}), 400
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        info = info_resp.json()
+        title = info.get('title', 'audio').replace('/', '-').replace('\\', '-')
 
-        if info is None:
+        adaptive_formats = info.get('adaptiveFormats', [])
+        audio_streams = [f for f in adaptive_formats if f.get('type', '').startswith('audio/')]
+        if not audio_streams:
+            return jsonify({'error': 'No audio stream found'}), 400
+
+        best_audio = audio_streams[0]
+        audio_url = best_audio.get('url', '')
+        if not audio_url:
+            return jsonify({'error': 'Could not get audio URL'}), 400
+
+        ext = 'webm'
+        if 'opus' in best_audio.get('type', ''):
+            ext = 'webm'
+        elif 'mp4' in best_audio.get('type', '') or 'aac' in best_audio.get('type', ''):
+            ext = 'm4a'
+
+        filename = f"{title}.{ext}"
+        file_path = os.path.join(tmp_dir, filename)
+
+        audio_resp = requests.get(audio_url, timeout=60, stream=True)
+        with open(file_path, 'wb') as f:
+            for chunk in audio_resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        if os.path.getsize(file_path) == 0:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            return jsonify({'error': 'Could not retrieve video info. Check the URL.'}), 400
+            return jsonify({'error': 'Downloaded file is empty'}), 400
 
-        downloaded_files = []
-        for f in os.listdir(tmp_dir):
-            file_path = os.path.join(tmp_dir, f)
-            if os.path.isfile(file_path):
-                size = os.path.getsize(file_path)
-                if size > 0:
-                    downloaded_files.append({
-                        'name': f,
-                        'size': size,
-                        'task_id': task_id
-                    })
-
-        if not downloaded_files:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return jsonify({'error': 'Download failed. The video may be private or restricted.'}), 400
+        downloaded_files = [{
+            'name': filename,
+            'size': os.path.getsize(file_path),
+            'task_id': task_id
+        }]
 
         progress_data[task_id] = {
             'status': 'completed',
@@ -80,12 +127,9 @@ def start_download():
             'files': [{'name': f['name'], 'size': f['size']} for f in downloaded_files]
         })
 
-    except yt_dlp.utils.DownloadError as e:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return jsonify({'error': f'Download error: {str(e)[:200]}'}), 400
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        return jsonify({'error': f'Server error: {str(e)[:200]}'}), 500
+        return jsonify({'error': str(e)[:200]}), 500
 
 @app.route('/api/file/<task_id>/<filename>')
 def download_file(task_id, filename):
